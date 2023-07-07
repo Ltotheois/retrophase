@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retrophase"
+version = "0.9"
+authors = [
+  { name="Luis Bonah", email="bonah@ph1.uni-koeln.de" },
+]
+description = "Retrophase provides a convenient and interactive way to change the phase of a lock-in amplifier measurement retrospectively."
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = ['numpy', 'pandas', 'matplotlib', 'PyQt6']
+classifiers = [
+	"Programming Language :: Python :: 3",
+	"License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+	"Operating System :: OS Independent",
+]
+keywords = ["Phase", "Spectroscopy", "Lock-In"]
+
+[project.scripts]
+retro = "retro:start"
