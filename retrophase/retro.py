@@ -32,19 +32,10 @@ PYQT_MAX = 2147483647
 matplotlib.rcParams['axes.formatter.useoffset'] = False
 matplotlib.rcParams['patch.facecolor'] = "blue"
 
-
-### TODO
-
-# Allow to read multiple files
-# Show all read files in list (allow to delete with del and add with drag and drop)
-# Current file is shown in plot with X (and optionally Y) on top and the new spectrum on bottom
-# Quick action for going to the next or previous file as well as dial and QDoubleSpinBox for entering phase
-# Auto mode to find optimal phase with single click by scanning all frequencies and finding the one with the maximum value
-# Apply for all
-
-def change_phase(fs, xs, ys, phase):
+def change_phase(fs, xs, ys, phase_in_degree):
+	phase_in_radian = phase_in_degree / 180 * np.pi
 	rs = (xs + 1j * ys)
-	zs = np.real(rs * np.exp(-1j * phase))
+	zs = np.real(rs * np.exp(-1j * phase_in_radian))
 	return(zs)
 
 ### GUI
@@ -187,41 +178,34 @@ class MainWindow(QMainWindow):
 		self.notificationarea.setHidden(True)
 		layout.addWidget(self.notificationarea)
 
-		# button_layout = QGridLayout()
+		button_layout = QGridLayout()
 		
-		# column_index = 0
+		row_index = 0
+		column_index = 0
 		
-		# button_layout.addWidget(QLabel("Window Function: "), 0, column_index)
-		# button_layout.addWidget(QQ(QComboBox, "windowfunction", options=WINDOWFUNCTIONS), 0, column_index+1)
+		button_layout.addWidget(QLabel("Phase [Degree]: "), row_index, column_index)
+		button_layout.addWidget(QQ(QDoubleSpinBox, "phase", range=(0, 360), singlestep=1), row_index, column_index+1)
 
+		row_index += 1
+		column_index =0 
 		
-		# tmp = QLabel()
-		# self.dynamic_labels[tmp] = ("tvaluesunit", lambda: f"Window Start [{unit_to_str(self.config['tvaluesunit'])}s]: ")
-		# button_layout.addWidget(tmp, 1, column_index)
-		# button_layout.addWidget(QQ(QDoubleSpinBox, "windowstart", minWidth=80, range=(None, None)), 1, column_index+1)
-
-		# tmp = QLabel()
-		# self.dynamic_labels[tmp] = ("tvaluesunit", lambda: f"Window Stop [{unit_to_str(self.config['tvaluesunit'])}s]: ")
-		# button_layout.addWidget(tmp, 2, column_index)
-		# button_layout.addWidget(QQ(QDoubleSpinBox, "windowstop", minWidth=80, range=(None, None)), 2, column_index+1)
+		button_layout.addWidget(QQ(QPushButton, text="Auto Phase", change=lambda: self.autophase()), row_index, column_index)
+		column_index += 1
+		button_layout.addWidget(QQ(QPushButton, text="Load", change=lambda: self.open_files()), row_index, column_index)
+		column_index += 1
+		button_layout.addWidget(QQ(QPushButton, text="Apply all", change=lambda: self.apply_all()), row_index, column_index)
 		
-		# column_index += 2
+		row_index += 1
+		column_index = 0
 		
-		# button_layout.addWidget(QQ(QCheckBox, "zeropad", text="Zeropad"), 0, column_index)
+		button_layout.addWidget(QQ(QPushButton, text="Previous", change=lambda: self.update_selected_file(self.fileindex-1)), row_index, column_index)
+		column_index += 1
+		button_layout.addWidget(QQ(QPushButton, text="Save", change=lambda: self.save_file()), row_index, column_index)
+		column_index += 1
+		button_layout.addWidget(QQ(QPushButton, text="Next", change=lambda: self.update_selected_file(self.fileindex+1)), row_index, column_index)
 		
-		# tmp = QLabel()
-		# self.dynamic_labels[tmp] = ("samplerateunit", lambda: f"Samplerate [{unit_to_str(self.config['samplerateunit'])}Hz]:")
-		# button_layout.addWidget(tmp, 1, column_index)
-		# button_layout.addWidget(QQ(QDoubleSpinBox, "samplerate", minWidth=80, range=(0, None)), 1, column_index+1)
 		
-		# tmp = QLabel()
-		# self.dynamic_labels[tmp] = ("lovaluesunit", lambda: f"LO [{unit_to_str(self.config['lovaluesunit'])}Hz]:")
-		# button_layout.addWidget(tmp, 2, column_index)
-		# button_layout.addWidget(QQ(QDoubleSpinBox, "localoscillator", minWidth=80, range=(0, None)), 2, column_index+1)
-		
-		# column_index += 2
-		# layout.addLayout(button_layout)
-
+		layout.addLayout(button_layout)
 		widget = QWidget()
 		self.setCentralWidget(widget)
 		widget.setLayout(layout)
@@ -255,10 +239,10 @@ class MainWindow(QMainWindow):
 
 		fs, xs, ys = self.data
 		zs = change_phase(fs, xs, ys, self.config["phase"])
-		data = np.vstack(fs, zs).T
+		data = np.vstack((fs, zs)).T
 		
 		np.savetxt(savename, data, **self.config["savefile_kwargs"])
-		self.notification(f"Saved data successfully to '{fname}'")
+		self.notification(f"Saved data successfully to '{savename}'")
 
 	def notification(self, text):
 		self.notificationarea.setText(text)
@@ -307,6 +291,8 @@ class MainWindow(QMainWindow):
 		self.fig.savefig(fname, **config["savefigure_kwargs"])
 
 	def update_selected_file(self, index=0):
+		index = max(0, index)
+		index = min(len(self.files)-1, index)
 		self.fileindex = index
 		fname = self.files[self.fileindex]
 		
@@ -314,6 +300,35 @@ class MainWindow(QMainWindow):
 		self.data = fs, xs, ys
 		
 		self.update_data(force_rescale=True)
+		self.notification(f"File {index+1} out of {len(self.files)} currently selected. Name is {fname}.")
+
+	def autophase(self):
+		if not self.data:
+			self.notification("No data loaded")
+			return
+		
+		fs, xs, ys = self.data
+		
+		phases_to_test = np.linspace(0, 360, 36000)
+		max_per_phase = [change_phase(fs, xs, ys, phase).max() for phase in phases_to_test]
+		best_phase = phases_to_test[np.argmax(max_per_phase)]
+		
+		self.config["phase"] = best_phase
+
+	def apply_all(self):
+		phase = self.config["phase"]
+		for fname in self.files:
+			fs, xs, ys = np.genfromtxt(fname, delimiter='\t', unpack=True)
+			zs = change_phase(fs, xs, ys, phase)
+
+			basename, extension = os.path.splitext(fname)
+			savename = basename + "RETRO" + extension
+			
+			data = np.vstack((fs, zs)).T
+			np.savetxt(savename, data, **self.config["savefile_kwargs"])
+		
+		self.notification(f"Applied the current phase of {phase} deg to all files.")
+
 
 	def update_data(self, force_rescale=False):
 		thread = threading.Thread(target=self.update_data_core, args=(force_rescale, ))
@@ -348,7 +363,9 @@ class MainWindow(QMainWindow):
 			
 			breakpoint(ownid, self.update_data_thread)
 			
-			if force_rescale:
+			# @Luis: When would you not like a rescale to happen
+			if force_rescale or True:
+				# x-ranges are coupled -> only set on one axis
 				self.ax0.set_xlim(fs.min(), fs.max())
 				
 				if self.config["show_y"]:
