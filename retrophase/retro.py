@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
 			"phase": 0,
 			"rescale": True,
 			"margin": 0.1,
-			
+			"rescale": True,
 		})
 
 		self.gui()
@@ -136,6 +136,8 @@ class MainWindow(QMainWindow):
 
 		actionmenu = self.menuBar().addMenu(f"Actions")
 		actionmenu.addAction(QQ(QAction, "mpltoolbar", parent=self, text="&Show MPL Toolbar", tooltip="Show or hide matplotlib toolbar", checkable=True))
+		actionmenu.addSeparator()
+		actionmenu.addAction(QQ(QAction, "rescale", parent=self, text="&Rescale Plot", tooltip="Rescale plot when updating", checkable=True))
 		actionmenu.addSeparator()
 		actionmenu.addAction(QQ(QAction, "show_y", parent=self, text="&Show Y Component", tooltip="Show or hide the y component", checkable=True))
 		actionmenu.addSeparator()
@@ -363,8 +365,7 @@ class MainWindow(QMainWindow):
 			
 			breakpoint(ownid, self.update_data_thread)
 			
-			# @Luis: When would you not like a rescale to happen
-			if force_rescale or True:
+			if force_rescale or self.config["rescale"]:
 				# x-ranges are coupled -> only set on one axis
 				self.ax0.set_xlim(fs.min(), fs.max())
 				
@@ -385,11 +386,6 @@ class MainWindow(QMainWindow):
 			self.redrawplot.emit()
 		except BreakpointError as E:
 			pass
-
-	# @Luis
-	# def onselect(self, xmin, xmax):
-		# self.config["windowstart"] = xmin
-		# self.config["windowstop"] = xmax
 
 class Config(dict):
 	def __init__(self, signal, init_values={}):
