@@ -20,4 +20,4 @@ classifiers = [
 keywords = ["Phase", "Spectroscopy", "Lock-In"]
 
 [project.scripts]
-retro = "retro:start"
+retrophase = "retrophase:start"
