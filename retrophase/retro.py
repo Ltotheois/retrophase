@@ -112,7 +112,7 @@ class MainWindow(QMainWindow):
 		
 		self.data = None
 		self.files = None
-		self.fileindex = None
+		self.fileindex = 0
 
 		config = self.config = Config(self.updateconfig, {
 			"mpltoolbar": True,
@@ -324,6 +324,10 @@ class MainWindow(QMainWindow):
 		self.fig.savefig(fname, **config["savefigure_kwargs"])
 
 	def update_selected_file(self, index=0):
+		if not self.files:
+			self.notification(f"No files are loaded.")
+			return
+		
 		index = max(0, index)
 		index = min(len(self.files)-1, index)
 		self.fileindex = index
