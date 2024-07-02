@@ -2,12 +2,14 @@
 # -*- coding: utf-8 -*-
 
 # Author: Luis Bonah
-# Description: Program to create CSV files for the AWG
+# Description: Program to retrospectively change the phase of absorption measurements that are demodulated with a lock-in amplifier.
 
 
 import os
 import sys
 import json
+import glob
+import argparse
 import traceback as tb
 import numpy as np
 import pandas as pd
@@ -37,6 +39,28 @@ def change_phase(fs, xs, ys, phase_in_degree):
 	rs = (xs + 1j * ys)
 	zs = np.real(rs * np.exp(-1j * phase_in_radian))
 	return(zs)
+
+def autophase(fs, xs, ys, step=4, target_resolution=0.1):
+	phase_min = 0
+	phase_max = 360
+	
+	while True:
+		phases_to_test = np.arange(phase_min, phase_max + step, step)
+		best_phase = autophase_core(fs, xs, ys, phases_to_test)
+		
+		if step < target_resolution:
+			break
+		
+		phase_min = best_phase - 2 * step
+		phase_max = best_phase + 2 * step
+		step = step / 10
+	
+	return(best_phase)
+	
+def autophase_core(fs, xs, ys, phases_to_test):
+	max_per_phase = [change_phase(fs, xs, ys, phase).max() for phase in phases_to_test]
+	best_phase = phases_to_test[np.argmax(max_per_phase)]
+	return(best_phase)
 
 ### GUI
 class QSpinBox(QSpinBox):
@@ -77,7 +101,7 @@ class MainWindow(QMainWindow):
 	updateconfig = pyqtSignal(tuple)
 	redrawplot = pyqtSignal()
 	
-	def __init__(self, parent=None):
+	def __init__(self, parent=None, **kwargs):
 		global config
 		
 		super().__init__(parent)
@@ -106,11 +130,18 @@ class MainWindow(QMainWindow):
 			"rescale": True,
 			"margin": 0.1,
 			"rescale": True,
+			"autophase_step": kwargs['step'],
+			"autophase_targetresolution": kwargs['resolution'],
 		})
 
 		self.gui()
 		self.setWindowTitle("RETRO")
 		self.readoptions(OPTIONFILE, ignore=True)
+		
+		files = kwargs.get('files')
+		if files:
+			self.open_files(files)
+		
 		self.show()
 
 	def dragEnterEvent(self, event):
@@ -191,7 +222,7 @@ class MainWindow(QMainWindow):
 		row_index += 1
 		column_index =0 
 		
-		button_layout.addWidget(QQ(QPushButton, text="Auto Phase", change=lambda: self.autophase()), row_index, column_index)
+		button_layout.addWidget(QQ(QPushButton, text="Auto Phase", change=lambda: self.autophase_gui()), row_index, column_index)
 		column_index += 1
 		button_layout.addWidget(QQ(QPushButton, text="Load", change=lambda: self.open_files()), row_index, column_index)
 		column_index += 1
@@ -233,7 +264,7 @@ class MainWindow(QMainWindow):
 			savename, _ = QFileDialog.getSaveFileName(None, 'Choose File to Save to',"")
 		else:
 			basename, extension = os.path.splitext(fname)
-			savename = basename + "RETRO" + extension
+			savename = basename + '.datpopt'
 		
 		if not savename:
 			self.notification("No filename specified for saving.")
@@ -304,16 +335,15 @@ class MainWindow(QMainWindow):
 		self.update_data(force_rescale=True)
 		self.notification(f"File {index+1} out of {len(self.files)} currently selected. Name is {fname}.")
 
-	def autophase(self):
+	def autophase_gui(self):
 		if not self.data:
 			self.notification("No data loaded")
 			return
 		
 		fs, xs, ys = self.data
-		
-		phases_to_test = np.linspace(0, 360, 36000)
-		max_per_phase = [change_phase(fs, xs, ys, phase).max() for phase in phases_to_test]
-		best_phase = phases_to_test[np.argmax(max_per_phase)]
+		step = config['autophase_step']
+		target_res = config['autophase_targetresolution']
+		best_phase = autophase(fs, xs, ys, step=step, target_resolution=target_res)
 		
 		self.config["phase"] = best_phase
 
@@ -559,11 +589,61 @@ def except_hook(cls, exception, traceback):
 	window.notification(f"{exception}\n{''.join(tb.format_tb(traceback))}")
 
 
-def start():
+def start_gui(kwargs):
 	sys.excepthook = except_hook
 	app = QApplication(sys.argv)
-	window = MainWindow()
+	window = MainWindow(**kwargs)
 	sys.exit(app.exec())
+
+def start_headless(kwargs):
+	files = kwargs.get('files')
+	if not files:
+		print('No files were selected!')
+		return
+	
+	step = kwargs['step']
+	res = kwargs['resolution']
+	
+	for file in files:
+		fs, xs, ys = np.genfromtxt(file, delimiter='\t', unpack=True)
+		best_phase = autophase(fs, xs, ys, step=step, target_resolution=res)
+		
+		basename, extension = os.path.splitext(file)
+		savename = basename + '.datpopt'
+		zs = change_phase(fs, xs, ys, best_phase)
+		data = np.vstack((fs, zs)).T
+		np.savetxt(savename, data, delimiter='\t')
+		
+		if best_phase < 0:
+			best_phase += 360
+		print(f'Optimal phase of {best_phase:-6.2f}° for file \'{file}\'')
+
+def start():
+	epilog = 'Program to retrospectively change the phase of absorption measurements that are demodulated with a lock-in amplifier.'
+	parser = argparse.ArgumentParser(prog='Retrophase', epilog=epilog, formatter_class=argparse.RawDescriptionHelpFormatter)
+	
+	parser.add_argument('files', nargs='*', type=str, help='Glob string for files to be loaded')
+	parser.add_argument('--auto', '-a', action='store_true', help='Automatically determine the best phase for each file (will not start any gui)')
+	parser.add_argument('--resolution', '-r', type=float, default=0.1, help='Specifies the target resolution for the autophase algorithm')
+	parser.add_argument('--step', '-s', type=float, default=4, help='Specifies the initial step width for the autophase alogrithm')
+
+	args = parser.parse_args()
+	
+	kwargs = {}
+	
+	if args.files:
+		files = [ file for glob_str in args.files for file in glob.glob(glob_str, recursive=True) ]
+		kwargs['files'] = files
+	else:
+		kwargs['files'] = []
+	
+	kwargs['resolution'] = args.resolution
+	kwargs['step'] = args.step
+	
+	if args.auto:
+		start_headless(kwargs)
+	else:
+		start_gui(kwargs)
 
 if __name__ == '__main__':
 	start()
