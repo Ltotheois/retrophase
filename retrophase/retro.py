@@ -209,7 +209,7 @@ class MainWindow(QMainWindow):
 		self.notificationarea = QLabel()
 		self.notificationarea.setWordWrap(True)
 		self.notificationarea.setHidden(True)
-		layout.addWidget(self.notificationarea)
+		layout.addWidget(self.notificationarea, 2)
 
 		button_layout = QGridLayout()
 		
