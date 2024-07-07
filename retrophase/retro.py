@@ -37,8 +37,10 @@ matplotlib.rcParams['patch.facecolor'] = "blue"
 def change_phase(fs, xs, ys, phase_in_degree):
 	phase_in_radian = phase_in_degree / 180 * np.pi
 	rs = (xs + 1j * ys)
-	zs = np.real(rs * np.exp(-1j * phase_in_radian))
-	return(zs)
+	new_rs = rs * np.exp(-1j * phase_in_radian)
+	new_xs = np.real(new_rs)
+	new_ys = np.imag(new_rs)
+	return(new_xs, new_ys)
 
 def autophase(fs, xs, ys, step=4, target_resolution=0.1):
 	phase_min = 0
@@ -58,7 +60,7 @@ def autophase(fs, xs, ys, step=4, target_resolution=0.1):
 	return(best_phase)
 	
 def autophase_core(fs, xs, ys, phases_to_test):
-	max_per_phase = [change_phase(fs, xs, ys, phase).max() for phase in phases_to_test]
+	max_per_phase = [change_phase(fs, xs, ys, phase)[0].max() for phase in phases_to_test]
 	best_phase = phases_to_test[np.argmax(max_per_phase)]
 	return(best_phase)
 
@@ -132,6 +134,7 @@ class MainWindow(QMainWindow):
 			"rescale": True,
 			"autophase_step": kwargs['step'],
 			"autophase_targetresolution": kwargs['resolution'],
+			'overwrite': kwargs['overwrite'],
 		})
 
 		self.gui()
@@ -264,15 +267,15 @@ class MainWindow(QMainWindow):
 			savename, _ = QFileDialog.getSaveFileName(None, 'Choose File to Save to',"")
 		else:
 			basename, extension = os.path.splitext(fname)
-			savename = basename + '.datpopt'
+			savename = fname if config['overwrite'] else basename + '.popt'
 		
 		if not savename:
 			self.notification("No filename specified for saving.")
 			return
 
 		fs, xs, ys = self.data
-		zs = change_phase(fs, xs, ys, self.config["phase"])
-		data = np.vstack((fs, zs)).T
+		new_xs, new_ys = change_phase(fs, xs, ys, self.config["phase"])
+		data = np.vstack((fs, new_xs, new_ys)).T
 		
 		np.savetxt(savename, data, **self.config["savefile_kwargs"])
 		self.notification(f"Saved data successfully to '{savename}'")
@@ -355,12 +358,12 @@ class MainWindow(QMainWindow):
 		phase = self.config["phase"]
 		for fname in self.files:
 			fs, xs, ys = np.genfromtxt(fname, delimiter='\t', unpack=True)
-			zs = change_phase(fs, xs, ys, phase)
+			new_xs, new_ys = change_phase(fs, xs, ys, phase)
 
 			basename, extension = os.path.splitext(fname)
 			savename = basename + "RETRO" + extension
 			
-			data = np.vstack((fs, zs)).T
+			data = np.vstack((fs, new_xs, new_ys)).T
 			np.savetxt(savename, data, **self.config["savefile_kwargs"])
 		
 		self.notification(f"Applied the current phase of {phase} deg to all files.")
@@ -383,12 +386,12 @@ class MainWindow(QMainWindow):
 			breakpoint(ownid, self.update_data_thread)
 			
 			fs, xs, ys = self.data
-			zs = change_phase(fs, xs, ys, config["phase"])
+			new_xs, _ = change_phase(fs, xs, ys, config["phase"])
 			
 			breakpoint(ownid, self.update_data_thread)
 			
 			self.X_line.set_data(fs, xs)
-			self.Z_line.set_data(fs, zs)
+			self.Z_line.set_data(fs, new_xs)
 			
 			if self.config["show_y"]:
 				self.Y_line.set_data(fs, ys)
@@ -412,7 +415,7 @@ class MainWindow(QMainWindow):
 				ymin, ymax = ymin - ydiff * self.config["margin"], ymax + ydiff * self.config["margin"]
 				self.ax0.set_ylim(ymin, ymax)
 				
-				ymin, ymax = zs.min(), zs.max()
+				ymin, ymax = new_xs.min(), new_xs.max()
 				ydiff = ymax - ymin
 				ymin, ymax = ymin - ydiff * self.config["margin"], ymax + ydiff * self.config["margin"]
 				self.ax1.set_ylim(ymin, ymax)
@@ -607,20 +610,38 @@ def start_headless(kwargs):
 	
 	step = kwargs['step']
 	res = kwargs['resolution']
+	overwrite = kwargs['overwrite']
+
+	skipped_files = []
 	
 	for file in files:
 		fs, xs, ys = np.genfromtxt(file, delimiter='\t', unpack=True)
+		
+		rabss = np.sqrt(xs**2 + ys**2)
+		std = np.std(rabss)
+		xmax = np.max(rabss)
+	
+		if std / xmax > 0.1:
+			skipped_files.append(file)
+			continue
+
 		best_phase = autophase(fs, xs, ys, step=step, target_resolution=res)
 		
 		basename, extension = os.path.splitext(file)
-		savename = basename + '.datpopt'
-		zs = change_phase(fs, xs, ys, best_phase)
-		data = np.vstack((fs, zs)).T
+		savename = file if overwrite else basename + '.popt'
+		new_xs, new_ys = change_phase(fs, xs, ys, best_phase)
+		data = np.vstack((fs, new_xs, new_ys)).T
 		np.savetxt(savename, data, delimiter='\t')
 		
 		if best_phase < 0:
 			best_phase += 360
 		print(f'Optimal phase of {best_phase:-6.2f}° for file \'{file}\'')
+
+	print(f'Skipped {len(skipped_files)} files due to bad SNR.')
+	filesstring = ' '.join(f'\'{file}\'' for file in skipped_files)
+	print(f'Check them manually by running:\nretrophase {filesstring}')
+	
+
 
 def start():
 	epilog = 'Program to retrospectively change the phase of absorption measurements that are demodulated with a lock-in amplifier.'
@@ -630,6 +651,7 @@ def start():
 	parser.add_argument('--auto', '-a', action='store_true', help='Automatically determine the best phase for each file (will not start any gui)')
 	parser.add_argument('--resolution', '-r', type=float, default=0.1, help='Specifies the target resolution for the autophase algorithm')
 	parser.add_argument('--step', '-s', type=float, default=4, help='Specifies the initial step width for the autophase alogrithm')
+	parser.add_argument('--overwrite', '-o', action='store_true', help='Overwrite the file instead of saving in new file')
 
 	args = parser.parse_args()
 	
@@ -643,6 +665,7 @@ def start():
 	
 	kwargs['resolution'] = args.resolution
 	kwargs['step'] = args.step
+	kwargs['overwrite'] = args.overwrite
 	
 	if args.auto:
 		start_headless(kwargs)
