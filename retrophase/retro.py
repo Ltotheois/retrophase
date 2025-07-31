@@ -65,40 +65,6 @@ def autophase_core(fs, xs, ys, phases_to_test):
 	return(best_phase)
 
 ### GUI
-class QSpinBox(QSpinBox):
-	def __init__(self, *args, **kwargs):
-		super().__init__(*args, **kwargs)
-		self.setRange(0, PYQT_MAX)
-		
-	def setRange(self, min, max):
-		min = min if not min is None else -np.inf
-		max = max if not max is None else +np.inf
-		return super().setRange(min, max)
-
-class QDoubleSpinBox(QDoubleSpinBox):
-	def __init__(self, *args, **kwargs):
-		super().__init__(*args, **kwargs)
-		self.setDecimals(20)
-		self.setRange(0, PYQT_MAX)
-		
-		try:
-			self.setStepType(QAbstractSpinBox.StepType.AdaptiveDecimalStepType)
-		except:
-			pass
-
-	def textFromValue(self, value):
-		return(f"{value:.10f}".rstrip("0").rstrip("."))
-
-	def valueFromText(self, text):
-		return(np.float64(text))
-
-	def setRange(self, min, max):
-		min = min if not min is None else -np.inf
-		max = max if not max is None else +np.inf
-		return super().setRange(min, max)
-
-
-
 class MainWindow(QMainWindow):
 	updateconfig = pyqtSignal(tuple)
 	redrawplot = pyqtSignal()
@@ -129,6 +95,7 @@ class MainWindow(QMainWindow):
 			
 			"show_y": True,
 			"phase": 0,
+			"phase_step": 10,
 			"rescale": True,
 			"margin": 0.1,
 			"rescale": True,
@@ -220,7 +187,14 @@ class MainWindow(QMainWindow):
 		column_index = 0
 		
 		button_layout.addWidget(QLabel("Phase [Degree]: "), row_index, column_index)
-		button_layout.addWidget(QQ(QDoubleSpinBox, "phase", range=(0, 360), singlestep=1), row_index, column_index+1)
+		self.phase_input = QQ(QDoubleSpinBox, "phase", range=(0, 360), singlestep=config["phase_step"])
+		button_layout.addWidget(self.phase_input, row_index, column_index+1)
+		
+		tmp_layout = QHBoxLayout()
+		tmp_layout.addWidget(QLabel("Step [Degree]: "))
+		tmp_layout.addWidget(QQ(QDoubleSpinBox, "phase_step", step=30))
+		button_layout.addLayout(tmp_layout, row_index, column_index+2)
+		config.register('phase_step', lambda: self.phase_input.setSingleStep(self.config["phase_step"]))
 
 		row_index += 1
 		column_index =0 
